@@ -1,9 +1,7 @@
 FROM node:20-bookworm
 
-# Evita downloads desnecessários do Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Instala dependências do Chromium
 RUN apt-get update && apt-get install -y \
   chromium \
   chromium-driver \
@@ -24,8 +22,8 @@ RUN apt-get update && apt-get install -y \
   libxrandr2 \
   xdg-utils \
   ca-certificates \
-  --no-install-recommends \
-  && rm -rf /var/lib/apt/lists/*
+  --no-install-recommends && \
+  rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -34,6 +32,6 @@ RUN npm install
 
 COPY . .
 
-EXPOSE 3333
+EXPOSE 3000
 
 CMD ["npm", "start"]
