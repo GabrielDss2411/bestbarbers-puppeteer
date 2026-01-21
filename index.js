@@ -4,25 +4,41 @@ import puppeteer from "puppeteer";
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const HOST = "0.0.0.0";
+const PORT = 3000;
 
 /**
- * HEALTH CHECK
+ * Fecha o modal de avaliação (se existir)
  */
-app.get("/", (req, res) => {
-  res.send("BestBarbers Puppeteer API ON");
-});
+async function fecharModalSeExistir(page) {
+  try {
+    await page.waitForSelector('div[role="dialog"]', { timeout: 5000 });
+
+    await page.evaluate(() => {
+      const dialog = document.querySelector('div[role="dialog"]');
+      if (!dialog) return;
+
+      const closeButton =
+        dialog.querySelector('button[aria-label="Close"]') ||
+        dialog.querySelector('button svg')?.closest('button');
+
+      if (closeButton) closeButton.click();
+    });
+
+    await page.waitForTimeout(1500);
+  } catch {
+    // Modal não apareceu → segue fluxo
+  }
+}
 
 /**
- * LOGIN
+ * LOGIN + COLETA DE AGENDA
  */
-app.post("/login", async (req, res) => {
+app.post("/agenda", async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({
-      error: "email e password são obrigatórios",
+      error: "email e password são obrigatórios"
     });
   }
 
@@ -35,68 +51,90 @@ app.post("/login", async (req, res) => {
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
+        "--disable-dev-shm-usage"
+      ]
     });
 
     const page = await browser.newPage();
+    page.setDefaultTimeout(60000);
 
-    // IMPORTANTE: user agent real
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-    );
-
+    // 1️⃣ LOGIN
     await page.goto("https://adm.bestbarbers.app/login", {
-      waitUntil: "networkidle2",
-      timeout: 60000,
+      waitUntil: "domcontentloaded"
     });
 
-    // Campo email ou telefone
-    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
-    await page.type('input[name="email"]', email, { delay: 40 });
+    await page.waitForSelector('input[name="email"]');
+    await page.type('input[name="email"]', email, { delay: 50 });
 
-    // Campo senha
-    await page.waitForSelector('input[name="password"]', { timeout: 30000 });
-    await page.type('input[name="password"]', password, { delay: 40 });
+    await page.waitForSelector('input[name="password"]');
+    await page.type('input[name="password"]', password, { delay: 50 });
 
-    // 🔥 SUBMIT REAL (ENTER)
-    await page.keyboard.press("Enter");
-
-    // Aguarda redirecionamento pós-login
-    await page.waitForNavigation({
-      waitUntil: "networkidle2",
-      timeout: 60000,
+    // botão de login (chakra)
+    await page.evaluate(() => {
+      const buttons = [...document.querySelectorAll("button")];
+      const btn = buttons.find(b => b.innerText.toLowerCase().includes("entrar"));
+      if (btn) btn.click();
     });
 
-    const urlAtual = page.url();
+    // 2️⃣ AGUARDA A AGENDA
+    await page.waitForNavigation({ waitUntil: "networkidle2" });
+    await page.waitForSelector("aside", { timeout: 60000 });
 
-    // Se ainda estiver na tela de login, falhou
-    if (urlAtual.includes("/login")) {
-      throw new Error("Login não efetuado (permaneceu na tela de login)");
-    }
+    // 3️⃣ FECHA MODAL (CRÍTICO)
+    await fecharModalSeExistir(page);
 
-    res.json({
+    // 4️⃣ GARANTE QUE AGENDA RENDERIZOU
+    await page.waitForTimeout(3000);
+
+    // 5️⃣ EXTRAI AGENDA
+    const agenda = await page.evaluate(() => {
+      const cards = document.querySelectorAll("div");
+      const dados = [];
+
+      cards.forEach(card => {
+        const texto = card.innerText?.trim();
+        if (!texto) return;
+
+        if (
+          texto.includes("Clube Podium") ||
+          texto.includes("Reunião") ||
+          texto.includes("Corte") ||
+          texto.includes("Barba")
+        ) {
+          dados.push({
+            texto
+          });
+        }
+      });
+
+      return dados;
+    });
+
+    await browser.close();
+
+    return res.json({
       success: true,
-      message: "Login realizado com sucesso",
-      url: urlAtual,
+      total: agenda.length,
+      agenda
     });
 
-  } catch (err) {
-    console.error("ERRO LOGIN:", err.message);
-
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-
-  } finally {
+  } catch (error) {
     if (browser) await browser.close();
+
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
 /**
- * START SERVER
+ * Health check
  */
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 API rodando em http://${HOST}:${PORT}`);
+app.get("/", (req, res) => {
+  res.send("BestBarbers Puppeteer API ON");
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Puppeteer rodando na porta ${PORT}`);
 });
