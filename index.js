@@ -1,33 +1,33 @@
 import express from "express";
 import puppeteer from "puppeteer";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const app = express();
 app.use(express.json());
 
+// 🔴 ESSENCIAL
 const PORT = process.env.PORT || 3000;
+const HOST = "0.0.0.0";
 
 /**
- * LOGIN BESTBARBERS
- * Endpoint chamado pelo n8n
+ * HEALTH CHECK
+ */
+app.get("/", (req, res) => {
+  res.status(200).send("BestBarbers Puppeteer API ON");
+});
+
+/**
+ * LOGIN
  */
 app.post("/login", async (req, res) => {
-  const { email, senha } = req.body;
+  const { email, password } = req.body;
 
-  if (!email || !senha) {
-    return res.status(400).json({
-      success: false,
-      error: "Email e senha são obrigatórios",
-    });
+  if (!email || !password) {
+    return res.status(400).json({ error: "email e password são obrigatórios" });
   }
 
   let browser;
 
   try {
-    console.log("🚀 Iniciando Puppeteer...");
-
     browser = await puppeteer.launch({
       executablePath: "/usr/bin/chromium",
       headless: "new",
@@ -40,108 +40,46 @@ app.post("/login", async (req, res) => {
 
     const page = await browser.newPage();
 
-    await page.setViewport({ width: 1366, height: 768 });
-
-    console.log("🌐 Abrindo página de login...");
     await page.goto("https://adm.bestbarbers.app/login", {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle2",
       timeout: 60000,
     });
 
-    /**
-     * Aguarda o React/Chakra montar os inputs
-     */
-    console.log("⏳ Aguardando campo de email...");
-    await page.waitForFunction(
-      () => document.querySelector('input[name="email"]'),
-      { timeout: 60000 }
-    );
+    // Campo email / telefone
+    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
+    await page.type('input[name="email"]', email, { delay: 50 });
 
-    /**
-     * EMAIL
-     * <input type="inputMask" name="email" placeholder="E-mail ou Telefone">
-     */
-    console.log("✉️ Preenchendo email...");
-    await page.focus('input[name="email"]');
-    await page.keyboard.type(email, { delay: 40 });
+    // Campo senha
+    await page.waitForSelector('input[name="password"]', { timeout: 30000 });
+    await page.type('input[name="password"]', password, { delay: 50 });
 
-    /**
-     * SENHA
-     * <input type="password" name="password" placeholder="Sua senha">
-     */
-    console.log("🔑 Preenchendo senha...");
-    await page.waitForSelector('input[type="password"]', { timeout: 60000 });
-    await page.focus('input[type="password"]');
-    await page.keyboard.type(senha, { delay: 40 });
+    // Botão submit (chakra geralmente é button[type=submit])
+    await page.click('button[type="submit"]');
 
-    /**
-     * BOTÃO ENTRAR (Chakra UI)
-     */
-    console.log("🟢 Clicando no botão Entrar...");
-    await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll("button"))
-        .find(b => b.innerText.toLowerCase().includes("entrar"));
-      if (!btn) {
-        throw new Error("Botão Entrar não encontrado");
-      }
-      btn.click();
-    });
+    // Aguarda navegação pós-login
+    await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
 
-    /**
-     * Aguarda redirecionamento pós-login
-     */
-    await page.waitForTimeout(6000);
-
-    const urlPosLogin = page.url();
-    console.log("✅ URL pós-login:", urlPosLogin);
-
-    /**
-     * Cookies da sessão
-     */
-    const cookies = await page.cookies();
-    console.log("🍪 Cookies capturados:", cookies.length);
-
-    await browser.close();
-
-    return res.json({
+    res.json({
       success: true,
-      urlPosLogin,
-      cookies,
+      message: "Login executado com sucesso",
     });
 
   } catch (error) {
-    console.error("❌ ERRO NO LOGIN:", error.message);
+    console.error("ERRO:", error.message);
 
-    try {
-      if (browser) {
-        const pages = await browser.pages();
-        if (pages.length > 0) {
-          await pages[0].screenshot({
-            path: "/app/erro-login.png",
-            fullPage: true,
-          });
-        }
-        await browser.close();
-      }
-    } catch (_) {}
-
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       error: error.message,
     });
+
+  } finally {
+    if (browser) await browser.close();
   }
 });
 
 /**
- * HEALTH CHECK
+ * 🔥 ISSO RESOLVE 90% DOS PROBLEMAS
  */
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "bestbarbers-puppeteer",
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`✅ API Puppeteer rodando na porta ${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 API rodando em http://${HOST}:${PORT}`);
 });
