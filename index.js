@@ -32,6 +32,7 @@ app.post("/agenda", async (req, res) => {
     browser = await puppeteer.launch({
       executablePath: "/usr/bin/chromium",
       headless: "new",          // 🔥 DEBUG VISUAL (OBRIGATÓRIO AGORA)
+      slowMo: 50,               // 🔥 SIMULA HUMANO
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
