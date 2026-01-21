@@ -4,10 +4,16 @@ import puppeteer from "puppeteer";
 const app = express();
 app.use(express.json());
 
+/**
+ * Health check
+ */
 app.get("/", (req, res) => {
   res.send("BestBarbers Puppeteer API ON");
 });
 
+/**
+ * Coleta agenda após login
+ */
 app.post("/agenda", async (req, res) => {
   const { email, password } = req.body;
 
@@ -20,80 +26,87 @@ app.post("/agenda", async (req, res) => {
   let browser;
 
   try {
+    // ===============================
+    // 1️⃣ ABRE CHROME (DEBUG VISUAL)
+    // ===============================
     browser = await puppeteer.launch({
       executablePath: "/usr/bin/chromium",
-      headless: "new",
+      headless: false,          // 🔥 DEBUG VISUAL (OBRIGATÓRIO AGORA)
+      slowMo: 50,               // 🔥 SIMULA HUMANO
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-gpu"
+        "--disable-gpu",
+        "--disable-blink-features=AutomationControlled"
       ],
       timeout: 0
     });
 
     const page = await browser.newPage();
 
+    // ===============================
+    // 2️⃣ DISFARCE DE NAVEGADOR REAL
+    // ===============================
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) " +
+      "Chrome/120.0.0.0 Safari/537.36"
+    );
+
+    await page.setViewport({ width: 1366, height: 768 });
+
     page.setDefaultTimeout(120000);
     page.setDefaultNavigationTimeout(120000);
 
-    // 1️⃣ LOGIN
+    // ===============================
+    // 3️⃣ ACESSA LOGIN
+    // ===============================
     await page.goto("https://adm.bestbarbers.app/login", {
       waitUntil: "domcontentloaded"
     });
 
-    await page.waitForSelector('input[name="email"]', { visible: true });
-    await page.type('input[name="email"]', email, { delay: 50 });
+    // ===============================
+    // 4️⃣ ESPERA INPUT EMAIL (CHAKRA)
+    // ===============================
+    await page.waitForFunction(() => {
+      const input = document.querySelector('input[name="email"]');
+      return input && input.offsetParent !== null;
+    });
 
-    await page.waitForSelector('input[name="password"]', { visible: true });
-    await page.type('input[name="password"]', password, { delay: 50 });
+    await page.click('input[name="email"]', { clickCount: 3 });
+    await page.type('input[name="email"]', email, { delay: 80 });
 
-    // botão real é submit dentro do form
+    // ===============================
+    // 5️⃣ ESPERA INPUT PASSWORD
+    // ===============================
+    await page.waitForFunction(() => {
+      const input = document.querySelector('input[name="password"]');
+      return input && input.offsetParent !== null;
+    });
+
+    await page.click('input[name="password"]', { clickCount: 3 });
+    await page.type('input[name="password"]', password, { delay: 80 });
+
+    // ===============================
+    // 6️⃣ SUBMIT (ENTER FUNCIONA MELHOR)
+    // ===============================
     await page.keyboard.press("Enter");
 
-    // 2️⃣ ESPERA URL DA AGENDA (NÃO load)
+    // ===============================
+    // 7️⃣ ESPERA REDIRECIONAR PARA AGENDA
+    // ===============================
     await page.waitForFunction(
-      () => window.location.pathname.includes("/agenda"),
+      () => window.location.pathname.includes("agenda"),
       { timeout: 120000 }
     );
 
-    // 3️⃣ FECHA MODAL DE AVALIAÇÃO (SE EXISTIR)
+    // ===============================
+    // 8️⃣ FECHA MODAL (SE EXISTIR)
+    // ===============================
     try {
-      await page.waitForSelector('button:has-text("Enviar Avaliação")', {
-        timeout: 5000
-      });
+      await page.waitForTimeout(3000);
       await page.keyboard.press("Escape");
     } catch (_) {}
 
-    // 4️⃣ ESPERA AGENDA VISÍVEL
-    await page.waitForSelector("text/Agendamentos", { timeout: 120000 });
-
-    // 5️⃣ COLETA DADOS
-    const dados = await page.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll("div"))
-        .filter(el => el.innerText.includes("Corte"));
-
-      return cards.map(card => card.innerText);
-    });
-
-    await browser.close();
-
-    return res.json({
-      sucesso: true,
-      total: dados.length,
-      dados
-    });
-
-  } catch (err) {
-    if (browser) await browser.close();
-
-    return res.status(500).json({
-      error: "Falha ao acessar BestBarbers",
-      message: err.message
-    });
-  }
-});
-
-app.listen(3000, () => {
-  console.log("Servidor rodando na porta 3000");
-});
+    // ===================
