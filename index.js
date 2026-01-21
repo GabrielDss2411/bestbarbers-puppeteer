@@ -12,7 +12,7 @@ app.get("/", (req, res) => {
 });
 
 /**
- * Coleta agenda após login
+ * Login + acesso à agenda
  */
 app.post("/agenda", async (req, res) => {
   const { email, password } = req.body;
@@ -27,12 +27,11 @@ app.post("/agenda", async (req, res) => {
 
   try {
     // ===============================
-    // 1️⃣ ABRE CHROME (DEBUG VISUAL)
+    // 1️⃣ ABRE CHROME (HEADLESS REAL)
     // ===============================
     browser = await puppeteer.launch({
       executablePath: "/usr/bin/chromium",
-      headless: "new",          // 🔥 DEBUG VISUAL (OBRIGATÓRIO AGORA)
-      slowMo: 50,               // 🔥 SIMULA HUMANO
+      headless: "new", // ✅ obrigatório em Docker/EasyPanel
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -46,7 +45,7 @@ app.post("/agenda", async (req, res) => {
     const page = await browser.newPage();
 
     // ===============================
-    // 2️⃣ DISFARCE DE NAVEGADOR REAL
+    // 2️⃣ SIMULA NAVEGADOR REAL
     // ===============================
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -67,29 +66,29 @@ app.post("/agenda", async (req, res) => {
     });
 
     // ===============================
-    // 4️⃣ ESPERA INPUT EMAIL (CHAKRA)
+    // 4️⃣ INPUT EMAIL (CHAKRA UI)
     // ===============================
     await page.waitForFunction(() => {
-      const input = document.querySelector('input[name="email"]');
-      return input && input.offsetParent !== null;
+      const el = document.querySelector('input[name="email"]');
+      return el && el.offsetParent !== null;
     });
 
     await page.click('input[name="email"]', { clickCount: 3 });
     await page.type('input[name="email"]', email, { delay: 80 });
 
     // ===============================
-    // 5️⃣ ESPERA INPUT PASSWORD
+    // 5️⃣ INPUT PASSWORD
     // ===============================
     await page.waitForFunction(() => {
-      const input = document.querySelector('input[name="password"]');
-      return input && input.offsetParent !== null;
+      const el = document.querySelector('input[name="password"]');
+      return el && el.offsetParent !== null;
     });
 
     await page.click('input[name="password"]', { clickCount: 3 });
     await page.type('input[name="password"]', password, { delay: 80 });
 
     // ===============================
-    // 6️⃣ SUBMIT (ENTER FUNCIONA MELHOR)
+    // 6️⃣ SUBMIT LOGIN
     // ===============================
     await page.keyboard.press("Enter");
 
@@ -109,4 +108,47 @@ app.post("/agenda", async (req, res) => {
       await page.keyboard.press("Escape");
     } catch (_) {}
 
-    // ===================
+    // ===============================
+    // 9️⃣ CONFIRMA TELA DE AGENDAMENTOS
+    // ===============================
+    await page.waitForFunction(() => {
+      return document.body.innerText.includes("Agendamentos");
+    });
+
+    // ===============================
+    // 🔟 COLETA DADOS (EXEMPLO INICIAL)
+    // ===============================
+    const dados = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("div"))
+        .map(el => el.innerText)
+        .filter(txt => txt && txt.length > 30)
+        .slice(0, 20);
+    });
+
+    await browser.close();
+
+    return res.json({
+      sucesso: true,
+      total: dados.length,
+      dados
+    });
+
+  } catch (err) {
+    if (browser) await browser.close();
+
+    return res.status(500).json({
+      sucesso: false,
+      erro: "Falha ao acessar BestBarbers",
+      detalhe: err.message
+    });
+  }
+});
+
+/**
+ * 🚨 PORTA CORRETA PARA EASYPANEL
+ */
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Puppeteer BestBarbers rodando na porta ${PORT}`);
+});
