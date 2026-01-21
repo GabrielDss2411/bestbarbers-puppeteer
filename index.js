@@ -38,7 +38,7 @@ app.post("/login", async (req, res) => {
     await page.setViewport({ width: 1366, height: 768 });
 
     // ✅ URL CORRETA
-    await page.goto("https://app.bestbarbers.app/login", {
+    await page.goto("https://adm.bestbarbers.app/login", {
       waitUntil: "networkidle2",
       timeout: 60000
     });
@@ -84,7 +84,7 @@ app.get("/admin/clientes", async (req, res) => {
       return res.status(401).json({ error: "Sessão não iniciada" });
     }
 
-    await page.goto("https://app.bestbarbers.app/admin/clientes", {
+    await page.goto("https://adm.bestbarbers.app/admin/clientes", {
       waitUntil: "networkidle2"
     });
 
