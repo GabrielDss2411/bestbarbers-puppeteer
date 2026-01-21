@@ -1,112 +1,147 @@
 import express from "express";
 import puppeteer from "puppeteer";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-let browser;
-let page;
+const PORT = process.env.PORT || 3000;
 
-async function getBrowser() {
-  if (!browser) {
+/**
+ * LOGIN BESTBARBERS
+ * Endpoint chamado pelo n8n
+ */
+app.post("/login", async (req, res) => {
+  const { email, senha } = req.body;
+
+  if (!email || !senha) {
+    return res.status(400).json({
+      success: false,
+      error: "Email e senha são obrigatórios",
+    });
+  }
+
+  let browser;
+
+  try {
+    console.log("🚀 Iniciando Puppeteer...");
+
     browser = await puppeteer.launch({
       executablePath: "/usr/bin/chromium",
       headless: "new",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
+        "--disable-dev-shm-usage",
+      ],
     });
-  }
-  return browser;
-}
 
-// 🔹 Health check
-app.get("/", (req, res) => {
-  res.send("BestBarbers Puppeteer API ON");
-});
-
-// 🔐 LOGIN
-app.post("/login", async (req, res) => {
-  const { email, senha } = req.body;
-
-  try {
-    const browser = await getBrowser();
-    page = await browser.newPage();
+    const page = await browser.newPage();
 
     await page.setViewport({ width: 1366, height: 768 });
 
-    // ✅ URL CORRETA
+    console.log("🌐 Abrindo página de login...");
     await page.goto("https://adm.bestbarbers.app/login", {
-      waitUntil: "networkidle2",
-      timeout: 60000
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
     });
 
-    // Aguarda os campos corretos
-    await page.waitForSelector('input[type="email"]');
-    await page.waitForSelector('input[type="password"]');
+    /**
+     * Aguarda o React/Chakra montar os inputs
+     */
+    console.log("⏳ Aguardando campo de email...");
+    await page.waitForFunction(
+      () => document.querySelector('input[name="email"]'),
+      { timeout: 60000 }
+    );
 
-    await page.type('input[type="email"]', email, { delay: 50 });
-    await page.type('input[type="password"]', senha, { delay: 50 });
+    /**
+     * EMAIL
+     * <input type="inputMask" name="email" placeholder="E-mail ou Telefone">
+     */
+    console.log("✉️ Preenchendo email...");
+    await page.focus('input[name="email"]');
+    await page.keyboard.type(email, { delay: 40 });
 
-    // Botão real do sistema
-    await page.click('button[type="submit"]');
+    /**
+     * SENHA
+     * <input type="password" name="password" placeholder="Sua senha">
+     */
+    console.log("🔑 Preenchendo senha...");
+    await page.waitForSelector('input[type="password"]', { timeout: 60000 });
+    await page.focus('input[type="password"]');
+    await page.keyboard.type(senha, { delay: 40 });
 
-    // Aguarda redirecionamento para admin
-    await page.waitForNavigation({ waitUntil: "networkidle2" });
+    /**
+     * BOTÃO ENTRAR (Chakra UI)
+     */
+    console.log("🟢 Clicando no botão Entrar...");
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll("button"))
+        .find(b => b.innerText.toLowerCase().includes("entrar"));
+      if (!btn) {
+        throw new Error("Botão Entrar não encontrado");
+      }
+      btn.click();
+    });
 
-    const urlAtual = page.url();
+    /**
+     * Aguarda redirecionamento pós-login
+     */
+    await page.waitForTimeout(6000);
 
-    if (!urlAtual.includes("/admin")) {
-      throw new Error("Login não redirecionou para /admin");
-    }
+    const urlPosLogin = page.url();
+    console.log("✅ URL pós-login:", urlPosLogin);
 
-    res.json({
+    /**
+     * Cookies da sessão
+     */
+    const cookies = await page.cookies();
+    console.log("🍪 Cookies capturados:", cookies.length);
+
+    await browser.close();
+
+    return res.json({
       success: true,
-      message: "Login realizado com sucesso",
-      url: urlAtual
+      urlPosLogin,
+      cookies,
     });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({
+    console.error("❌ ERRO NO LOGIN:", error.message);
+
+    try {
+      if (browser) {
+        const pages = await browser.pages();
+        if (pages.length > 0) {
+          await pages[0].screenshot({
+            path: "/app/erro-login.png",
+            fullPage: true,
+          });
+        }
+        await browser.close();
+      }
+    } catch (_) {}
+
+    return res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
 
-// 👥 EXEMPLO: BUSCAR CLIENTES
-app.get("/admin/clientes", async (req, res) => {
-  try {
-    if (!page) {
-      return res.status(401).json({ error: "Sessão não iniciada" });
-    }
-
-    await page.goto("https://adm.bestbarbers.app/admin/clientes", {
-      waitUntil: "networkidle2"
-    });
-
-    const clientes = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll("table tbody tr")).map(tr => {
-        const tds = tr.querySelectorAll("td");
-        return {
-          nome: tds[0]?.innerText || "",
-          telefone: tds[1]?.innerText || "",
-          email: tds[2]?.innerText || ""
-        };
-      });
-    });
-
-    res.json(clientes);
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+/**
+ * HEALTH CHECK
+ */
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "bestbarbers-puppeteer",
+  });
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
+  console.log(`✅ API Puppeteer rodando na porta ${PORT}`);
 });
