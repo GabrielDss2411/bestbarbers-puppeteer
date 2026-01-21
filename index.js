@@ -2,80 +2,11 @@ import express from "express";
 import puppeteer from "puppeteer";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 
-/**
- * ============================
- * HEALTH CHECK
- * ============================
- */
-app.get("/health", (req, res) => {
-  res.status(200).send("ok");
-});
-
-/**
- * ============================
- * TESTE BÁSICO DO PUPPETEER
- * ============================
- * Verifica se Chromium + Puppeteer estão funcionando no container
- */
-app.get("/puppeteer-test", async (req, res) => {
-  let browser;
-
-  try {
-    browser = await puppeteer.launch({
-      executablePath: "/usr/bin/chromium",
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
-    });
-
-    const page = await browser.newPage();
-    await page.goto("https://example.com", {
-      waitUntil: "networkidle2",
-      timeout: 60000
-    });
-
-    const title = await page.title();
-
-    await browser.close();
-
-    return res.json({
-      success: true,
-      title
-    });
-
-  } catch (error) {
-    if (browser) await browser.close();
-
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * ============================
- * LOGIN AUTOMATIZADO
- * ============================
- * Recebe email e senha via POST
- */
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({
-      success: false,
-      message: "Email e password são obrigatórios"
-    });
-  }
-
   let browser;
 
   try {
@@ -85,54 +16,67 @@ app.post("/login", async (req, res) => {
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
+        "--disable-dev-shm-usage",
+        "--disable-gpu"
       ]
     });
 
     const page = await browser.newPage();
 
-    await page.goto("https://adm.bestbarbers.app", {
+    await page.setViewport({ width: 1280, height: 800 });
+
+    console.log("➡️ Abrindo página de login...");
+    await page.goto("https://app.bestbarbers.com.br/login", {
       waitUntil: "networkidle2",
       timeout: 60000
     });
 
-    // Aguarda campos de login
-    await page.waitForSelector('input[name="email"]', { timeout: 30000 });
-    await page.waitForSelector('input[name="password"]', { timeout: 30000 });
+    console.log("➡️ Preenchendo email...");
+    await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 30000 });
+    await page.type('input[type="email"], input[name="email"]', email, { delay: 50 });
 
-    await page.type('input[name="email"]', email, { delay: 50 });
-    await page.type('input[name="password"]', password, { delay: 50 });
+    console.log("➡️ Preenchendo senha...");
+    await page.waitForSelector('input[type="password"], input[name="password"]', { timeout: 30000 });
+    await page.type('input[type="password"], input[name="password"]', password, { delay: 50 });
 
-    await Promise.all([
-      page.click('button[type="submit"]'),
-      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 })
-    ]);
+    console.log("➡️ Submetendo formulário...");
+    await page.evaluate(() => {
+      const form = document.querySelector("form");
+      if (form) form.submit();
+    });
 
-    // Captura cookies após login
+    console.log("➡️ Aguardando login...");
+    await page.waitForNavigation({
+      waitUntil: "networkidle2",
+      timeout: 60000
+    });
+
     const cookies = await page.cookies();
 
     await browser.close();
 
-    return res.json({
+    res.json({
       success: true,
       cookies
     });
 
   } catch (error) {
+    console.error("❌ Erro no login:", error.message);
+
     if (browser) await browser.close();
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       error: error.message
     });
   }
 });
 
-/**
- * ============================
- * START SERVER
- * ============================
- */
+app.get("/", (req, res) => {
+  res.send("BestBarbers Puppeteer API ON");
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 API rodando na porta ${PORT}`);
 });
