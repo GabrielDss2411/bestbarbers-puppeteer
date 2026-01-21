@@ -7,89 +7,84 @@ app.use(express.json());
 let browser;
 let page;
 
-// === CONFIG ===
-const LOGIN_URL = "https://app.bestbarbers.com.br/login";
-const ADMIN_URL = "https://app.bestbarbers.com.br/admin";
-
-// === INIT BROWSER ===
-async function initBrowser() {
-  if (browser) return;
-
-  browser = await puppeteer.launch({
-    executablePath: "/usr/bin/chromium",
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--dns-prefetch-disable",
-      "--disable-features=UseOzonePlatform",
-      "--host-resolver-rules=MAP * 8.8.8.8"
-    ]
-  });
-
-  page = await browser.newPage();
-  await page.setViewport({ width: 1366, height: 768 });
+async function getBrowser() {
+  if (!browser) {
+    browser = await puppeteer.launch({
+      executablePath: "/usr/bin/chromium",
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+      ]
+    });
+  }
+  return browser;
 }
 
-// === LOGIN ===
+// 🔹 Health check
+app.get("/", (req, res) => {
+  res.send("BestBarbers Puppeteer API ON");
+});
+
+// 🔐 LOGIN
 app.post("/login", async (req, res) => {
+  const { email, senha } = req.body;
+
   try {
-    const { email, senha } = req.body;
+    const browser = await getBrowser();
+    page = await browser.newPage();
 
-    if (!email || !senha) {
-      return res.status(400).json({ error: "Email e senha obrigatórios" });
-    }
+    await page.setViewport({ width: 1366, height: 768 });
 
-    await initBrowser();
+    // ✅ URL CORRETA
+    await page.goto("https://app.bestbarbers.app/login", {
+      waitUntil: "networkidle2",
+      timeout: 60000
+    });
 
-    await page.goto(LOGIN_URL, { waitUntil: "networkidle2" });
-
-    await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+    // Aguarda os campos corretos
+    await page.waitForSelector('input[type="email"]');
+    await page.waitForSelector('input[type="password"]');
 
     await page.type('input[type="email"]', email, { delay: 50 });
     await page.type('input[type="password"]', senha, { delay: 50 });
 
-    await Promise.all([
-      page.click('button[type="submit"]'),
-      page.waitForNavigation({ waitUntil: "networkidle2" })
-    ]);
+    // Botão real do sistema
+    await page.click('button[type="submit"]');
 
-    if (page.url().includes("/login")) {
-      return res.status(401).json({ error: "Login inválido" });
+    // Aguarda redirecionamento para admin
+    await page.waitForNavigation({ waitUntil: "networkidle2" });
+
+    const urlAtual = page.url();
+
+    if (!urlAtual.includes("/admin")) {
+      throw new Error("Login não redirecionou para /admin");
     }
 
-    res.json({ success: true, url: page.url() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// === DASHBOARD ADMIN ===
-app.get("/admin/dashboard", async (req, res) => {
-  try {
-    await initBrowser();
-
-    await page.goto(ADMIN_URL, { waitUntil: "networkidle2" });
-
-    const data = await page.evaluate(() => {
-      return {
-        title: document.title,
-        url: location.href
-      };
+    res.json({
+      success: true,
+      message: "Login realizado com sucesso",
+      url: urlAtual
     });
 
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
-// === CLIENTES (EXEMPLO) ===
+// 👥 EXEMPLO: BUSCAR CLIENTES
 app.get("/admin/clientes", async (req, res) => {
   try {
-    await page.goto(`${ADMIN_URL}/clientes`, {
+    if (!page) {
+      return res.status(401).json({ error: "Sessão não iniciada" });
+    }
+
+    await page.goto("https://app.bestbarbers.app/admin/clientes", {
       waitUntil: "networkidle2"
     });
 
@@ -97,20 +92,21 @@ app.get("/admin/clientes", async (req, res) => {
       return Array.from(document.querySelectorAll("table tbody tr")).map(tr => {
         const tds = tr.querySelectorAll("td");
         return {
-          nome: tds[0]?.innerText,
-          telefone: tds[1]?.innerText,
-          email: tds[2]?.innerText
+          nome: tds[0]?.innerText || "",
+          telefone: tds[1]?.innerText || "",
+          email: tds[2]?.innerText || ""
         };
       });
     });
 
     res.json(clientes);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-// === START SERVER ===
-app.listen(3000, () => {
-  console.log("🚀 Puppeteer API rodando na porta 3000");
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`API rodando na porta ${PORT}`);
 });
