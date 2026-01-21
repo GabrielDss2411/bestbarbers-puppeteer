@@ -4,35 +4,10 @@ import puppeteer from "puppeteer";
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+app.get("/", (req, res) => {
+  res.send("BestBarbers Puppeteer API ON");
+});
 
-/**
- * Fecha o modal de avaliação (se existir)
- */
-async function fecharModalSeExistir(page) {
-  try {
-    await page.waitForSelector('div[role="dialog"]', { timeout: 5000 });
-
-    await page.evaluate(() => {
-      const dialog = document.querySelector('div[role="dialog"]');
-      if (!dialog) return;
-
-      const closeButton =
-        dialog.querySelector('button[aria-label="Close"]') ||
-        dialog.querySelector('button svg')?.closest('button');
-
-      if (closeButton) closeButton.click();
-    });
-
-    await page.waitForTimeout(1500);
-  } catch {
-    // Modal não apareceu → segue fluxo
-  }
-}
-
-/**
- * LOGIN + COLETA DE AGENDA
- */
 app.post("/agenda", async (req, res) => {
   const { email, password } = req.body;
 
@@ -51,90 +26,74 @@ app.post("/agenda", async (req, res) => {
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
+        "--disable-dev-shm-usage",
+        "--disable-gpu"
+      ],
+      timeout: 0
     });
 
     const page = await browser.newPage();
-    page.setDefaultTimeout(60000);
+
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
 
     // 1️⃣ LOGIN
     await page.goto("https://adm.bestbarbers.app/login", {
       waitUntil: "domcontentloaded"
     });
 
-    await page.waitForSelector('input[name="email"]');
+    await page.waitForSelector('input[name="email"]', { visible: true });
     await page.type('input[name="email"]', email, { delay: 50 });
 
-    await page.waitForSelector('input[name="password"]');
+    await page.waitForSelector('input[name="password"]', { visible: true });
     await page.type('input[name="password"]', password, { delay: 50 });
 
-    // botão de login (chakra)
-    await page.evaluate(() => {
-      const buttons = [...document.querySelectorAll("button")];
-      const btn = buttons.find(b => b.innerText.toLowerCase().includes("entrar"));
-      if (btn) btn.click();
-    });
+    // botão real é submit dentro do form
+    await page.keyboard.press("Enter");
 
-    // 2️⃣ AGUARDA A AGENDA
-    await page.waitForNavigation({ waitUntil: "networkidle2" });
-    await page.waitForSelector("aside", { timeout: 60000 });
+    // 2️⃣ ESPERA URL DA AGENDA (NÃO load)
+    await page.waitForFunction(
+      () => window.location.pathname.includes("/agenda"),
+      { timeout: 120000 }
+    );
 
-    // 3️⃣ FECHA MODAL (CRÍTICO)
-    await fecharModalSeExistir(page);
-
-    // 4️⃣ GARANTE QUE AGENDA RENDERIZOU
-    await page.waitForTimeout(3000);
-
-    // 5️⃣ EXTRAI AGENDA
-    const agenda = await page.evaluate(() => {
-      const cards = document.querySelectorAll("div");
-      const dados = [];
-
-      cards.forEach(card => {
-        const texto = card.innerText?.trim();
-        if (!texto) return;
-
-        if (
-          texto.includes("Clube Podium") ||
-          texto.includes("Reunião") ||
-          texto.includes("Corte") ||
-          texto.includes("Barba")
-        ) {
-          dados.push({
-            texto
-          });
-        }
+    // 3️⃣ FECHA MODAL DE AVALIAÇÃO (SE EXISTIR)
+    try {
+      await page.waitForSelector('button:has-text("Enviar Avaliação")', {
+        timeout: 5000
       });
+      await page.keyboard.press("Escape");
+    } catch (_) {}
 
-      return dados;
+    // 4️⃣ ESPERA AGENDA VISÍVEL
+    await page.waitForSelector("text/Agendamentos", { timeout: 120000 });
+
+    // 5️⃣ COLETA DADOS
+    const dados = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll("div"))
+        .filter(el => el.innerText.includes("Corte"));
+
+      return cards.map(card => card.innerText);
     });
 
     await browser.close();
 
     return res.json({
-      success: true,
-      total: agenda.length,
-      agenda
+      sucesso: true,
+      total: dados.length,
+      dados
     });
 
-  } catch (error) {
+  } catch (err) {
     if (browser) await browser.close();
 
     return res.status(500).json({
-      success: false,
-      error: error.message
+      error: "Falha ao acessar BestBarbers",
+      message: err.message
     });
   }
 });
 
-/**
- * Health check
- */
-app.get("/", (req, res) => {
-  res.send("BestBarbers Puppeteer API ON");
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Puppeteer rodando na porta ${PORT}`);
+app.listen(3000, () => {
+  console.log("Servidor rodando na porta 3000");
 });
