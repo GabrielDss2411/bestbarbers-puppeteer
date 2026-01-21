@@ -4,7 +4,6 @@ import puppeteer from "puppeteer";
 const app = express();
 app.use(express.json());
 
-// 🔴 ESSENCIAL
 const PORT = process.env.PORT || 3000;
 const HOST = "0.0.0.0";
 
@@ -12,7 +11,7 @@ const HOST = "0.0.0.0";
  * HEALTH CHECK
  */
 app.get("/", (req, res) => {
-  res.status(200).send("BestBarbers Puppeteer API ON");
+  res.send("BestBarbers Puppeteer API ON");
 });
 
 /**
@@ -22,7 +21,9 @@ app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
-    return res.status(400).json({ error: "email e password são obrigatórios" });
+    return res.status(400).json({
+      error: "email e password são obrigatórios",
+    });
   }
 
   let browser;
@@ -40,36 +41,52 @@ app.post("/login", async (req, res) => {
 
     const page = await browser.newPage();
 
+    // IMPORTANTE: user agent real
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+    );
+
     await page.goto("https://adm.bestbarbers.app/login", {
       waitUntil: "networkidle2",
       timeout: 60000,
     });
 
-    // Campo email / telefone
+    // Campo email ou telefone
     await page.waitForSelector('input[name="email"]', { timeout: 30000 });
-    await page.type('input[name="email"]', email, { delay: 50 });
+    await page.type('input[name="email"]', email, { delay: 40 });
 
     // Campo senha
     await page.waitForSelector('input[name="password"]', { timeout: 30000 });
-    await page.type('input[name="password"]', password, { delay: 50 });
+    await page.type('input[name="password"]', password, { delay: 40 });
 
-    // Botão submit (chakra geralmente é button[type=submit])
-    await page.click('button[type="submit"]');
+    // 🔥 SUBMIT REAL (ENTER)
+    await page.keyboard.press("Enter");
 
-    // Aguarda navegação pós-login
-    await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
+    // Aguarda redirecionamento pós-login
+    await page.waitForNavigation({
+      waitUntil: "networkidle2",
+      timeout: 60000,
+    });
+
+    const urlAtual = page.url();
+
+    // Se ainda estiver na tela de login, falhou
+    if (urlAtual.includes("/login")) {
+      throw new Error("Login não efetuado (permaneceu na tela de login)");
+    }
 
     res.json({
       success: true,
-      message: "Login executado com sucesso",
+      message: "Login realizado com sucesso",
+      url: urlAtual,
     });
 
-  } catch (error) {
-    console.error("ERRO:", error.message);
+  } catch (err) {
+    console.error("ERRO LOGIN:", err.message);
 
     res.status(500).json({
       success: false,
-      error: error.message,
+      error: err.message,
     });
 
   } finally {
@@ -78,7 +95,7 @@ app.post("/login", async (req, res) => {
 });
 
 /**
- * 🔥 ISSO RESOLVE 90% DOS PROBLEMAS
+ * START SERVER
  */
 app.listen(PORT, HOST, () => {
   console.log(`🚀 API rodando em http://${HOST}:${PORT}`);
